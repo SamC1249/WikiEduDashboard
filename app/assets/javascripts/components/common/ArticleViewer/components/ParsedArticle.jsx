@@ -21,50 +21,69 @@ export const ParsedArticle = ({ highlightedHtml, whocolorHtml, parsedArticle }) 
       const spans = containerRef.current.querySelectorAll('.editor-token');
       if (!spans.length) return;
 
+      // Simple approach: only process highlighted spans with valid authors
       const spanArray = Array.from(spans);
-      let lastUserId = null;
-      let lastClass = null;
+      const validSpans = [];
+      
+      // First pass: collect only highlighted spans with valid authors, with their original indices
+      spanArray.forEach((span, originalIndex) => {
+        const className = span.className || '';
+        // Must have user-highlight-* class
+        if (!className.split(' ').some(cls => cls.startsWith('user-highlight-'))) {
+          return;
+        }
+        // Must have valid title
+        const name = span.getAttribute('title');
+        if (!name || name.trim() === '' || name.trim().toLowerCase() === 'unknown') {
+          return;
+        }
+        validSpans.push({ span, originalIndex });
+      });
 
-      spanArray.forEach((span, index) => {
-        const m = span.className.match(/token-editor-(\d+)/);
+      // Second pass: add aria-labels to valid spans only
+      let previousUserId = null;
+      validSpans.forEach((item, index) => {
+        const { span, originalIndex } = item;
+        const className = span.className || '';
+        const m = className.match(/token-editor-(\d+)/);
         if (!m) return;
         const uid = m[1];
-        const cls = span.className.split(' ').find(s => s.startsWith('user-highlight-'));
+        const name = span.getAttribute('title').trim();
 
-        // Check if this is the start of a new group
-        const isNewGroup = uid !== lastUserId || cls !== lastClass;
+        // Simple transition detection (no group logic)
+        const isNewUser = uid !== previousUserId;
         
-        // Check if this is the last span in the current group
-        const nextSpan = spanArray[index + 1];
-        const isLastInGroup = !nextSpan || (() => {
-          const nextMatch = nextSpan.className.match(/token-editor-(\d+)/);
-          if (!nextMatch) return true;
-          const nextUid = nextMatch[1];
-          const nextCls = nextSpan.className.split(' ').find(s => s.startsWith('user-highlight-'));
-          return nextUid !== uid || nextCls !== cls;
-        })();
+        // Check if this is the last span in the edit
+        // It's the last if:
+        // 1. There's no next valid span, OR
+        // 2. The next valid span has a different user ID, OR
+        // 3. The next span in the original array is not highlighted (transition to non-highlighted)
+        const nextValidSpan = validSpans[index + 1];
+        const nextValidMatch = nextValidSpan ? nextValidSpan.span.className.match(/token-editor-(\d+)/) : null;
+        const nextValidUid = nextValidMatch ? nextValidMatch[1] : null;
+        
+        // Check the next span in the original array to see if it's highlighted
+        const nextOriginalSpan = spanArray[originalIndex + 1];
+        const nextOriginalIsHighlighted = nextOriginalSpan ? 
+          (nextOriginalSpan.className || '').split(' ').some(cls => cls.startsWith('user-highlight-')) : false;
+        
+        const isLastInEdit = !nextValidSpan || 
+                            (nextValidUid !== uid) || 
+                            !nextOriginalIsHighlighted;
 
-        // Mark the first span of a new group
-        if (isNewGroup) {
-          const name = span.getAttribute('title');
-          if (name) {
-            span.setAttribute('aria-label', `Edited by ${name.replace(/"/g, '&quot;')}`);
-          }
+        // Announce at start of edit
+        if (isNewUser) {
+          span.removeAttribute('title');
+          span.setAttribute('aria-label', `Edited by ${name.replace(/"/g, '&quot;')}`);
         }
 
-        // Mark the last span of the current group
-        if (isLastInGroup) {
-          const name = span.getAttribute('title');
-          if (name) {
-            const currentLabel = span.getAttribute('aria-label') || '';
-            // If it already has "Edited by", append "End edit", otherwise add "End edit by [user]"
-            const endEditText = currentLabel.includes('Edited by') ? ' End edit' : `End edit by ${name.replace(/"/g, '&quot;')}`;
-            span.setAttribute('aria-label', `${currentLabel}${endEditText}`.trim());
-          }
+        // Announce at end of edit
+        if (isLastInEdit) {
+          const currentLabel = span.getAttribute('aria-label') || '';
+          span.setAttribute('aria-label', `${currentLabel} End edit`.trim());
         }
 
-        lastUserId = uid;
-        lastClass = cls;
+        previousUserId = uid;
       });
     }, 10);
 
